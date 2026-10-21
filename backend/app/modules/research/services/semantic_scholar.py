@@ -25,9 +25,11 @@ from .authors import display_authors, parse_flat_authors, set_record_authors
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     safe_int,
     split_page_metadata,
+    split_volume_issue,
     unique_sorted,
 )
 
@@ -164,12 +166,15 @@ def _to_record(paper: dict[str, Any]) -> SourceRecord:
     pages, article_number = split_page_metadata(
         clean_text(journal.get("pages")) or None
     )
+    volume, issue = split_volume_issue(
+        str(journal.get("volume")) if journal.get("volume") else None
+    )
 
     record = SourceRecord(
         title=clean_text(paper.get("title")),
         authors=authors,
         year=parse_year(paper.get("year") or paper.get("publicationDate")),
-        journal=clean_text(journal.get("name") or paper.get("venue")),
+        journal=normalize_journal_name(journal.get("name") or paper.get("venue")),
         abstract=clean_text(paper.get("abstract")),
         url=url,
         doi=doi,
@@ -177,7 +182,8 @@ def _to_record(paper: dict[str, Any]) -> SourceRecord:
         is_open_access=bool(is_oa) if is_oa is not None else None,
         is_review=is_review,
         work_type="review" if is_review else "article",
-        volume=str(journal.get("volume")) if journal.get("volume") else None,
+        volume=volume,
+        issue=issue,
         pages=pages,
         article_number=article_number,
         subjects=unique_sorted([str(item) for item in (paper.get("fieldsOfStudy") or [])]),

@@ -9,6 +9,8 @@ parse or a cross-provider disagreement is surfaced with a copyable
 
 from __future__ import annotations
 
+import re
+
 from ..models import SourceRecord
 from .authors import (
     AuthorCheck,
@@ -18,7 +20,7 @@ from .authors import (
     initials,
     parse_flat_name,
 )
-from .text import clean_text
+from .text import clean_text, expand_page_range, normalize_journal_name
 
 
 def split_name(name: str) -> tuple[str, str]:
@@ -109,7 +111,8 @@ def _chicago_authors(authors: list[AuthorName]) -> str:
 
 
 def _title(text: str | None) -> str:
-    return clean_text(text).rstrip(".")
+    cleaned = clean_text(text).rstrip(".")
+    return re.sub(r"\s+:", ":", cleaned)
 
 
 def _year(record: SourceRecord) -> str:
@@ -128,7 +131,8 @@ def _link(record: SourceRecord) -> str:
 
 
 def _pages(record: SourceRecord) -> str:
-    return (record.pages or "").replace("--", "–").replace("-", "–") if record.pages else ""
+    raw = expand_page_range(record.pages)
+    return raw.replace("--", "–").replace("-", "–") if raw else ""
 
 
 def _article_number(record: SourceRecord) -> str:
@@ -156,7 +160,7 @@ def _apa_body(record: SourceRecord, authors: list[AuthorName]) -> str:
     pieces.append(f"{_period(title)} " if title else "")
 
     if record.journal:
-        journal = f"{record.journal}"
+        journal = normalize_journal_name(record.journal) or ""
         if record.volume:
             journal += f", {record.volume}"
         if record.issue:
@@ -186,7 +190,7 @@ def _mla_body(record: SourceRecord, authors: list[AuthorName]) -> str:
         pieces.append(f'"{title}." ')
 
     if record.journal:
-        journal = record.journal
+        journal = normalize_journal_name(record.journal) or ""
         if record.volume:
             journal += f", vol. {record.volume}"
         if record.issue:
@@ -216,7 +220,7 @@ def _chicago_body(record: SourceRecord, authors: list[AuthorName]) -> str:
         pieces.append(f'"{title}." ')
 
     if record.journal:
-        journal = record.journal
+        journal = normalize_journal_name(record.journal) or ""
         if record.volume:
             journal += f" {record.volume}"
         if record.issue:

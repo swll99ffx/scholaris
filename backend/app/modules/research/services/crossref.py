@@ -25,6 +25,7 @@ from .authors import AuthorName, display_authors, parse_flat_name, set_record_au
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     safe_int,
     split_page_metadata,
@@ -140,9 +141,14 @@ def _to_record(item: dict[str, Any]) -> SourceRecord:
     authors = display_authors(author_details)
 
     containers = item.get("container-title") or []
-    journal = clean_text(containers[0] if containers else "")
+    journal = normalize_journal_name(containers[0] if containers else "")
 
-    issued = (item.get("issued") or {}).get("date-parts") or []
+    # Prefer the print issue date when the article was published online first:
+    # the version of record (and the APA year) follows the printed issue.
+    print_date = item.get("published-print") or (
+        item.get("journal-issue") or {}
+    ).get("published-print")
+    issued = ((print_date or item.get("issued")) or {}).get("date-parts") or []
     year = parse_year(issued[0][0]) if issued and issued[0] else None
 
     licenses = item.get("license") or []

@@ -29,6 +29,7 @@ from .authors import (
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     safe_int,
     split_page_metadata,
@@ -154,7 +155,7 @@ def to_record(result: dict) -> SourceRecord:
         title=title,
         authors=authors,
         year=parse_year(result.get("pubYear") or journal_info.get("yearOfPublication")),
-        journal=clean_text(journal_meta.get("title") or result.get("journalTitle")),
+        journal=normalize_journal_name(journal_meta.get("title") or result.get("journalTitle")),
         abstract=clean_text(result.get("abstractText")),
         url=url,
         doi=normalize_doi(result.get("doi")),

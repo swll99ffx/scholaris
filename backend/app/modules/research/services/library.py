@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .citations import split_name
+from .text import clean_text, expand_page_range, normalize_journal_name, split_volume_issue
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -62,6 +63,19 @@ def _now() -> str:
 
 def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
     payload = json.loads(row["payload"] or "{}")
+    # Older saves may hold provider quirks (journal abbreviations, abbreviated
+    # page ranges, a stray space before a colon). Normalise on read so the
+    # library and its exports heal without a database migration.
+    payload["title"] = clean_text(payload.get("title")) or payload.get("title") or ""
+    payload["journal"] = normalize_journal_name(payload.get("journal"))
+    restored_pages = expand_page_range(payload.get("pages"))
+    if restored_pages:
+        payload["pages"] = restored_pages
+    volume = clean_text(payload.get("volume")) or None
+    issue = clean_text(payload.get("issue")) or None
+    if volume and not issue:
+        volume, issue = split_volume_issue(volume)
+    payload["volume"], payload["issue"] = volume, issue
     payload.update(
         {
             "library_id": row["id"],

@@ -73,7 +73,11 @@ instructions below to run it on your own machine or local network.
 - **Retraction and preprint safety.** Retracted papers are flagged with a clear warning and are
   hard-excluded in **Best match** mode. Preprints are labelled, and **Exclude preprints** is a
   one-click filter.
-- **Formatting fix for article numbers.** APA 7 journal articles without a page range include
+- **Clean, citation-ready metadata.** Provider quirks are normalised before a
+  source is displayed or cited: journal abbreviations such as
+  `Phytotherapy research : PTR` become `Phytotherapy Research`, shortened page
+  ranges such as `8571-6` become `8571–8576`, and stray spaces before a title
+  colon are removed. APA 7 journal articles without a page range include
   `Article [number]` after the volume and issue, e.g. `Journal, 12(3), Article e12345.`
 - **Your last search is remembered** — switching to the Library and back (or refreshing) keeps
   your results, query and filters.

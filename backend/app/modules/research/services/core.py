@@ -22,7 +22,7 @@ from app.core.rate_limit import RateLimiter
 from ..models import SourceRecord
 from ..schemas import SearchFilters
 from .authors import AuthorName, display_authors, parse_flat_name, set_record_authors
-from .text import clean_text, normalize_doi, parse_year, safe_int, unique_sorted
+from .text import clean_text, normalize_doi, normalize_journal_name, parse_year, safe_int, unique_sorted
 
 # Trailing slash avoids an extra 301 redirect (and a Cloudflare round-trip).
 BASE_URL = "https://api.core.ac.uk/v3/search/works/"
@@ -79,7 +79,11 @@ def to_record(item: dict) -> SourceRecord:
     authors = display_authors(author_details)
 
     journals = item.get("journals") or []
-    journal = clean_text(journals[0].get("title")) if journals and journals[0].get("title") else None
+    journal = (
+        normalize_journal_name(journals[0].get("title"))
+        if journals and journals[0].get("title")
+        else None
+    )
 
     url = item.get("downloadUrl")
     for link in item.get("links") or []:

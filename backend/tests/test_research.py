@@ -14,7 +14,7 @@ from unittest.mock import patch
 from app.config import Settings
 from app.modules.research.models import SourceRecord
 from app.modules.research.schemas import SearchFilters, SearchRequest, SourceOut
-from app.modules.research.services import doaj, europepmc, library
+from app.modules.research.services import crossref, doaj, europepmc, library
 from app.modules.research.services.authors import (
     AuthorCheck,
     AuthorName,
@@ -51,10 +51,13 @@ from app.modules.research.services.ranking import (
 from app.modules.research.services.notes import generate_notes
 from app.modules.research.services.search import _gather
 from app.modules.research.services.text import (
+    expand_page_range,
     normalize_doi,
+    normalize_journal_name,
     normalize_title,
     reconstruct_abstract,
     split_page_metadata,
+    split_volume_issue,
 )
 
 # Interpretation tests must never touch the network.
@@ -114,6 +117,87 @@ class TextHelpersTest(unittest.TestCase):
         inverted = {"world": [1], "Hello": [0], "!": [2]}
         self.assertEqual(reconstruct_abstract(inverted), "Hello world !")
         self.assertEqual(reconstruct_abstract(None), "")
+
+    def test_journal_suffix_and_case_are_normalized(self):
+        self.assertEqual(
+            normalize_journal_name("Phytotherapy research : PTR"),
+            "Phytotherapy Research",
+        )
+        self.assertEqual(
+            normalize_journal_name("Asian Pacific journal of cancer prevention : APJCP"),
+            "Asian Pacific Journal of Cancer Prevention",
+        )
+        self.assertEqual(
+            normalize_journal_name("International journal of molecular sciences"),
+            "International Journal of Molecular Sciences",
+        )
+        # Deliberate casing and acronyms must survive.
+        self.assertEqual(normalize_journal_name("PLoS ONE"), "PLoS ONE")
+        self.assertEqual(normalize_journal_name("eLife"), "eLife")
+        self.assertIsNone(normalize_journal_name(""))
+
+    def test_abbreviated_page_ranges_are_expanded(self):
+        self.assertEqual(expand_page_range("8571-6"), "8571-8576")
+        self.assertEqual(expand_page_range("123-6"), "123-126")
+        self.assertEqual(expand_page_range("17-25"), "17-25")
+        # Ambiguous backwards range: never guess.
+        self.assertEqual(expand_page_range("12-1"), "12-1")
+        self.assertEqual(expand_page_range("e12345"), "e12345")
+        self.assertEqual(split_page_metadata("8571-6"), ("8571-8576", None))
+
+    def test_semantic_scholar_volume_issue_is_split(self):
+        self.assertEqual(split_volume_issue("15 20"), ("15", "20"))
+        self.assertEqual(split_volume_issue("21"), ("21", None))
+        self.assertEqual(split_volume_issue(None), (None, None))
+
+    def test_space_before_colon_is_removed(self):
+        record = sample_record(
+            title="Moringa oleifera : a food plant with multiple medicinal uses"
+        )
+        apa = format_citations(record)["apa"]
+        self.assertIn(
+            "Moringa oleifera: a food plant with multiple medicinal uses.", apa
+        )
+
+    def test_apa_cleans_moringa_provider_artifacts(self):
+        record = sample_record(
+            title="Health benefits of Moringa oleifera.",
+            authors=[
+                "Ahmad Faizal Abdull Razis",
+                "Muhammad Din Ibrahim",
+                "Saie Brindha Kntayya",
+            ],
+            year=2014,
+            journal="Asian Pacific journal of cancer prevention : APJCP",
+            volume="15",
+            issue="20",
+            pages="8571-6",
+            doi="10.7314/apjcp.2014.15.20.8571",
+            url="https://doi.org/10.7314/apjcp.2014.15.20.8571",
+        )
+        apa = format_citations(record)["apa"]
+        self.assertIn(
+            "Asian Pacific Journal of Cancer Prevention, 15(20), 8571–8576.", apa
+        )
+        self.assertNotIn(": APJCP", apa)
+        self.assertNotIn("8571–6.", apa)
+
+    def test_apa_cleans_pubmed_style_journal_and_pages(self):
+        record = sample_record(
+            title="Moringa oleifera : a food plant with multiple medicinal uses",
+            year=2007,
+            journal="Phytotherapy research : PTR",
+            volume="21",
+            issue="1",
+            pages="17-25",
+            doi="10.1002/ptr.2023",
+            url="https://doi.org/10.1002/ptr.2023",
+        )
+        apa = format_citations(record)["apa"]
+        self.assertIn("Phytotherapy Research, 21(1), 17–25.", apa)
+        self.assertIn(
+            "Moringa oleifera: a food plant with multiple medicinal uses.", apa
+        )
 
 
 class NameHelpersTest(unittest.TestCase):
@@ -418,6 +502,22 @@ class MergeTest(unittest.TestCase):
         b = sample_record(doi="10.1/b")
         merged = merge_records([a, b])
         self.assertEqual(len(merged), 2)
+
+    def test_merge_prefers_the_sentence_cased_title(self):
+        title_case = sample_record(
+            title="Health Benefits of Moringa oleifera",
+            providers=["crossref"],
+            provider_ids={"crossref": "10.1/m"},
+            doi="10.1/m",
+        )
+        sentence_case = sample_record(
+            title="Health benefits of Moringa oleifera.",
+            providers=["pubmed"],
+            provider_ids={"pubmed": "123"},
+            doi="10.1/m",
+        )
+        merged = merge_records([title_case, sentence_case])[0]
+        self.assertEqual(merged.title, "Health benefits of Moringa oleifera.")
 
 
 class RankingTest(unittest.TestCase):
@@ -1434,6 +1534,44 @@ class EuropePmcParsingTest(unittest.TestCase):
         self.assertIn("europepmc", record.providers)
 
 
+class CrossrefParsingTest(unittest.TestCase):
+    def _item(self, **overrides) -> dict:
+        base = {
+            "DOI": "10.1002/ptr.2023",
+            "title": ["Moringa oleifera : a food plant with multiple medicinal uses"],
+            "author": [{"family": "Anwar", "given": "Farooq"}],
+            "container-title": ["Phytotherapy research : PTR"],
+            "issued": {"date-parts": [[2006, 11, 6]]},
+            "published-print": {"date-parts": [[2007, 1]]},
+            "volume": "21",
+            "issue": "1",
+            "page": "17-25",
+        }
+        base.update(overrides)
+        return base
+
+    def test_print_year_and_journal_are_normalized(self):
+        record = crossref._to_record(self._item())
+        self.assertEqual(record.year, 2007)
+        self.assertEqual(record.journal, "Phytotherapy Research")
+        self.assertEqual(
+            record.title,
+            "Moringa oleifera: a food plant with multiple medicinal uses",
+        )
+        self.assertEqual(record.pages, "17-25")
+
+    def test_journal_issue_date_is_the_fallback(self):
+        item = self._item()
+        item.pop("published-print")
+        item["journal-issue"] = {
+            "issue": "1",
+            "published-print": {"date-parts": [[2007, 1]]},
+        }
+        self.assertEqual(crossref._to_record(item).year, 2007)
+        item.pop("journal-issue")
+        self.assertEqual(crossref._to_record(item).year, 2006)
+
+
 class LanguageFilterTest(unittest.TestCase):
     def test_english_codes_are_english(self):
         for code in ("en", "eng", "English", "en-US"):
@@ -1518,6 +1656,27 @@ class LibraryRouteTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["notes"], "updated")
+
+    def test_saved_provider_artifacts_are_healed_on_read(self):
+        payload = {
+            "source": {
+                "id": "doi:10.1/heal",
+                "title": "Health benefits of Moringa oleifera : a review",
+                "journal": "Phytotherapy research : PTR",
+                "volume": "15 20",
+                "issue": None,
+                "pages": "8571-6",
+                "year": 2014,
+            }
+        }
+        response = self.client.post("/api/research/library", json=payload)
+        self.assertEqual(response.status_code, 201)
+        item = self.client.get("/api/research/library").json()["sources"][0]
+        self.assertEqual(item["journal"], "Phytotherapy Research")
+        self.assertEqual(item["volume"], "15")
+        self.assertEqual(item["issue"], "20")
+        self.assertEqual(item["pages"], "8571-8576")
+        self.assertEqual(item["title"], "Health benefits of Moringa oleifera: a review")
 
     def test_export_filename_is_branded_and_dated(self):
         self._save_slash_id()

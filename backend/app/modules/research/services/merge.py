@@ -46,6 +46,15 @@ def _unique(values: list[str]) -> list[str]:
     return result
 
 
+def _title_case_rank(title: str) -> int:
+    """Count title-cased words; used only to choose between provider spellings."""
+    return sum(
+        1
+        for index, word in enumerate(title.split())
+        if index > 0 and word[:1].isupper() and not word.isupper()
+    )
+
+
 def _merge_bool(a: bool | None, b: bool | None) -> bool | None:
     if a is True or b is True:
         return True
@@ -65,8 +74,15 @@ def merge_pair(base: SourceRecord, other: SourceRecord) -> SourceRecord:
             return secondary or primary
         return primary or secondary
 
-    # Titles: keep the longer (usually more complete) version.
-    if len(other.title) > len(base.title):
+    # Titles: keep the longer (usually more complete) version. When providers
+    # give the same title with different capitalisation, prefer the
+    # sentence-cased variant because APA 7 requires sentence case.
+    if not base.title:
+        base.title = other.title
+    elif normalize_title(base.title) == normalize_title(other.title):
+        if _title_case_rank(other.title) < _title_case_rank(base.title):
+            base.title = other.title
+    elif len(other.title) > len(base.title):
         base.title = other.title
 
     # Abstracts: keep the longest non-empty abstract.

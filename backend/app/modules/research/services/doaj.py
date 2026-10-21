@@ -24,6 +24,7 @@ from .authors import AuthorName, display_authors, parse_flat_name, set_record_au
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     split_page_metadata,
     unique_sorted,
@@ -123,7 +124,7 @@ def to_record(item: dict) -> SourceRecord:
         title=title,
         authors=authors,
         year=parse_year(bib.get("year")),
-        journal=clean_text(journal.get("title")),
+        journal=normalize_journal_name(journal.get("title")),
         abstract=clean_text(bib.get("abstract")),
         url=url,
         doi=doi,

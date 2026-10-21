@@ -27,6 +27,7 @@ from .authors import AuthorName, display_authors, set_record_authors
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     split_page_metadata,
     unique_sorted,
@@ -165,7 +166,7 @@ def _to_record(article: ET.Element, *, filters: SearchFilters) -> SourceRecord |
             )
     authors = display_authors(author_details)
 
-    journal = _text(article.find(".//Journal/Title"))
+    journal = normalize_journal_name(_text(article.find(".//Journal/Title")))
 
     year = parse_year(_text(article.find(".//JournalIssue/PubDate/Year")))
     if year is None:

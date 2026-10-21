@@ -26,6 +26,7 @@ from .authors import AuthorName, display_authors, parse_flat_name, set_record_au
 from .text import (
     clean_text,
     normalize_doi,
+    normalize_journal_name,
     parse_year,
     reconstruct_abstract,
     safe_int,
@@ -172,7 +173,7 @@ def to_record(work: dict[str, Any]) -> SourceRecord:
         title=title,
         authors=authors,
         year=parse_year(work.get("publication_year") or work.get("publication_date")),
-        journal=clean_text(source.get("display_name") or primary.get("raw_source_name")),
+        journal=normalize_journal_name(source.get("display_name") or primary.get("raw_source_name")),
         abstract=reconstruct_abstract(work.get("abstract_inverted_index")),
         url=url,
         doi=normalize_doi(work.get("doi")),
