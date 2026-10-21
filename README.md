@@ -24,8 +24,9 @@ that is added at the packaging step.
 
 Modules are built one at a time so each can be tested before the next starts.
 
-The repository is **source-only for now**: there is no public hosted instance yet. Follow the setup
-instructions below to run it on your own machine or local network.
+The repository is **source-first**: run it on your own machine or local network with the setup
+instructions below, or follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to put it online for
+**$0** on Oracle Cloud Always Free, behind one shared access code.
 
 ## What Module 1 does
 
@@ -185,6 +186,36 @@ npm run dev
 
 The frontend automatically calls the API on the **same host** at port `8000`, so no
 configuration is needed for LAN access. Override it with `frontend/.env` → `VITE_API_URL`.
+
+## Share it with other people (optional)
+
+Local and LAN use needs no setup. To serve the whole app from **one URL**, build the
+frontend and run the API as a single process:
+
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..\backend
+$env:SITE_PASSWORD = "choose-a-code"   # one shared access code
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Open <http://localhost:8000>. FastAPI serves the built app **and** the API from the same
+origin, so there is no CORS or `VITE_API_URL` to configure.
+
+- **`SITE_PASSWORD`** gates every API route behind one access code. Visitors unlock once
+  and stay signed in for 30 days (`SESSION_TTL_SECONDS`). Leave it empty for local/LAN use.
+  Changing the password invalidates every existing session.
+- **Inbound rate limits** (per client IP, per minute) protect the free scholarly APIs:
+  120 requests overall, 20 searches, 20 summaries and 8 login attempts. Adjust them with
+  the `RATE_LIMIT_*` variables.
+- `/api/health` stays public so uptime and keep-alive checks work.
+- For a shared deployment, point `DATABASE_PATH` at a separate database so visitors never
+  write to your personal library.
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a step-by-step **$0** Oracle Cloud Always Free
+setup with HTTPS, a persistent library, automatic restarts and one-command updates.
 
 ## Free API keys (optional but recommended)
 

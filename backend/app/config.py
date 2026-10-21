@@ -39,6 +39,26 @@ class Settings(BaseSettings):
     # Allows the Vite dev server on any private LAN IP, so your phone can connect.
     cors_origin_regex: str = r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?"
 
+    # ------------------------------------------------------------ public access
+    # Leave empty for local/LAN use (no gate). Set SITE_PASSWORD before putting
+    # the app on the public internet: every API route then needs one shared
+    # access code, and a signed session cookie is issued after login.
+    site_password: str = ""
+    session_cookie_name: str = "scholaris_session"
+    session_ttl_seconds: int = 30 * 24 * 60 * 60  # 30 days
+    # "auto" marks the cookie Secure only when the request came over HTTPS,
+    # so LAN logins over http:// still work.
+    cookie_secure: str = "auto"
+    # Inbound API limits (per client IP, per minute). Separate from the
+    # outbound provider rate limiters in the research services.
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 120
+    search_rate_limit_per_minute: int = 20
+    summarize_rate_limit_per_minute: int = 20
+    login_rate_limit_per_minute: int = 8
+    # Optional override for the built frontend. Defaults to <repo>/frontend/dist.
+    frontend_dist: str = ""
+
     # ------------------------------------------------------------ scholarly APIs
     # OpenAlex, Crossref and NCBI ask for a contact email ("polite pool").
     contact_email: str = "student@example.com"

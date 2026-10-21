@@ -207,3 +207,10 @@ export interface SaveSummaryResponse {
   created: boolean;
   message: string;
 }
+
+// ---------------------------------------------------------------- access gate
+
+export interface AccessStatus {
+  required: boolean;
+  authenticated: boolean;
+}

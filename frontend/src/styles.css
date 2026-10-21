@@ -2063,3 +2063,64 @@ p {
     text-align: left;
   }
 }
+
+/* ---------------------------------------------------------------- access gate */
+
+.gate-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(99, 102, 241, 0.24), transparent 42%),
+    radial-gradient(circle at 82% 88%, rgba(139, 92, 246, 0.18), transparent 46%),
+    var(--bg);
+}
+
+.gate-card {
+  width: min(430px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.gate-card h1 {
+  margin: 0;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+}
+
+.gate-card .page-subtitle {
+  margin: 0;
+}
+
+.gate-card .btn {
+  width: 100%;
+}
+
+.gate-status,
+.gate-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+}
+
+.gate-error {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 480px) {
+  .gate-card {
+    padding: 24px;
+  }
+}

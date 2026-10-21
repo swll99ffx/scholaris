@@ -1,4 +1,5 @@
 import type {
+  AccessStatus,
   ExportFormat,
   Health,
   LibraryItem,
@@ -26,7 +27,13 @@ export function apiBase(): string {
     return envBase.replace(/\/+$/, "");
   }
   if (typeof window !== "undefined" && window.location.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
+    const { protocol, hostname, port } = window.location;
+    // Vite dev and preview servers run on 5173/4173; the API listens on 8000.
+    if (port === "5173" || port === "4173") {
+      return `${protocol}//${hostname}:8000`;
+    }
+    // In production FastAPI serves the built app, so the API is same-origin.
+    return window.location.origin;
   }
   return "http://localhost:8000";
 }
@@ -43,6 +50,10 @@ export class ApiError extends Error {
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      // The session expired or the access code changed: show the gate again.
+      window.dispatchEvent(new Event("scholaris:unauthorized"));
+    }
     let message = `Request failed (${response.status})`;
     try {
       const body = (await response.json()) as { detail?: unknown };
@@ -234,4 +245,23 @@ export async function saveSummary(
     body: JSON.stringify({ summary, library_id: libraryId }),
   });
   return parseResponse<SaveSummaryResponse>(response);
+}
+
+// ---------------------------------------------------------------- access gate
+
+export async function fetchAccessStatus(): Promise<AccessStatus> {
+  const response = await fetch(`${apiBase()}/api/auth/status`, {
+    credentials: "include",
+  });
+  return parseResponse<AccessStatus>(response);
+}
+
+export async function unlockSite(password: string): Promise<void> {
+  const response = await fetch(`${apiBase()}/api/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  await parseResponse<{ ok: boolean }>(response);
 }

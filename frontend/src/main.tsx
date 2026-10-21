@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { registerSW } from "virtual:pwa-register";
 
 import { App } from "./App";
+import { AccessGate } from "./components/AccessGate";
 import "./styles.css";
 
 // Keeps the installed app / cached pages up to date automatically.
@@ -17,7 +18,9 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <AccessGate>
+        <App />
+      </AccessGate>
     </BrowserRouter>
   </StrictMode>,
 );
