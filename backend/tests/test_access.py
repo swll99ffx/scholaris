@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.core.access import (
     AccessMiddleware,
     SlidingWindowLimiter,
@@ -17,6 +19,7 @@ from app.core.access import (
     password_matches,
     session_valid,
 )
+from app.modules.research.services import library
 
 COOKIE = "scholaris_session"
 
@@ -187,13 +190,26 @@ class MainAppAccessTest(unittest.TestCase):
     def setUp(self):
         from app.main import app, settings
 
-        self.settings = settings
+        self.app = app
+        self.app_settings = settings
         self.original_password = settings.site_password
         settings.site_password = "test-code"
+
+        # A throwaway database, so the test does not depend on (or touch) the
+        # developer's library.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.temp_settings = Settings(
+            site_password="test-code",
+            database_path=Path(self._tmp.name) / "library.sqlite3",
+        )
+        library.init_db(self.temp_settings.database_path)
+        app.dependency_overrides[get_settings] = lambda: self.temp_settings
         self.client = TestClient(app)
 
     def tearDown(self):
-        self.settings.site_password = self.original_password
+        self.app.dependency_overrides.pop(get_settings, None)
+        self.app_settings.site_password = self.original_password
+        self._tmp.cleanup()
 
     def test_login_sets_a_cookie_and_unlocks_the_api(self):
         status = self.client.get("/api/auth/status").json()
