@@ -1,0 +1,32 @@
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+backend/.env
+frontend/.env
+
+# Database / runtime data
+*.sqlite3
+*.sqlite3-*
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dev-dist/
+
+# Desktop build output
+desktop/target/
+desktop/src-tauri/target/
+
+# Editors / OS
+.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.log
