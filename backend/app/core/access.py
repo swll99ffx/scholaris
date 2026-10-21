@@ -91,11 +91,14 @@ def cookie_secure(settings: Settings, request: Request) -> bool:
 
 
 def client_ip(request: Request) -> str:
+    # Proxies append the address they saw, so the right-most entry is the
+    # client as seen by the closest trusted proxy. Reading the left-most entry
+    # would let a caller prepend a fake IP and dodge the rate limits.
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
     return request.client.host if request.client else "unknown"
 
 

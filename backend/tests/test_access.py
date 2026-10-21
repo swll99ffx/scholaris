@@ -157,6 +157,24 @@ class GateMiddlewareTest(unittest.TestCase):
             429,
         )
 
+    def test_spoofed_forwarded_for_entry_is_ignored(self):
+        # Caddy appends the real client address to whatever the caller sent.
+        client, _ = build_client(password="", rate_limit_enabled=True, rate_limit_per_minute=1)
+        self.assertEqual(
+            client.get(
+                "/api/private",
+                headers={"X-Forwarded-For": "1.1.1.1, 9.9.9.9"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            client.get(
+                "/api/private",
+                headers={"X-Forwarded-For": "2.2.2.2, 9.9.9.9"},
+            ).status_code,
+            429,
+        )
+
 
 class CookieSecureTest(unittest.TestCase):
     def test_auto_mode_detects_https_behind_a_proxy(self):
