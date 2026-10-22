@@ -14,13 +14,17 @@ import csv
 import re
 import sqlite3
 import unicodedata
+import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from .citations import split_name
 from .text import clean_text, expand_page_range, normalize_journal_name, split_volume_issue
+
+# How long a summarized source's full text waits for the student to save it.
+STASH_RETENTION_DAYS = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -34,9 +38,16 @@ CREATE TABLE IF NOT EXISTS sources (
     payload   TEXT NOT NULL,
     notes     TEXT NOT NULL DEFAULT '',
     tags      TEXT NOT NULL DEFAULT '[]',
-    saved_at  TEXT NOT NULL
+    saved_at  TEXT NOT NULL,
+    full_text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sources_saved_at ON sources(saved_at DESC);
+CREATE TABLE IF NOT EXISTS summary_texts (
+    id         TEXT PRIMARY KEY,
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_summary_texts_created_at ON summary_texts(created_at);
 """
 
 
@@ -44,6 +55,12 @@ def init_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _connect(path) as connection:
         connection.executescript(SCHEMA)
+        # Existing databases from v1.0 predate full_text; add it in place.
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(sources)")}
+        if "full_text" not in columns:
+            connection.execute(
+                "ALTER TABLE sources ADD COLUMN full_text TEXT NOT NULL DEFAULT ''"
+            )
 
 
 @contextmanager
@@ -87,24 +104,31 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
     return payload
 
 
-def save_source(path: Path, source: dict[str, Any], notes: str = "", tags: list[str] | None = None) -> dict[str, Any]:
+def save_source(
+    path: Path,
+    source: dict[str, Any],
+    notes: str = "",
+    tags: list[str] | None = None,
+    full_text: str = "",
+) -> dict[str, Any]:
     library_id = str(source["id"])
     tags = tags or []
     with _connect(path) as connection:
         connection.execute(
             """
-            INSERT INTO sources (id, title, year, authors, journal, doi, url, payload, notes, tags, saved_at)
-            VALUES (:id, :title, :year, :authors, :journal, :doi, :url, :payload, :notes, :tags, :saved_at)
+            INSERT INTO sources (id, title, year, authors, journal, doi, url, payload, notes, tags, saved_at, full_text)
+            VALUES (:id, :title, :year, :authors, :journal, :doi, :url, :payload, :notes, :tags, :saved_at, :full_text)
             ON CONFLICT(id) DO UPDATE SET
-                title   = excluded.title,
-                year    = excluded.year,
-                authors = excluded.authors,
-                journal = excluded.journal,
-                doi     = excluded.doi,
-                url     = excluded.url,
-                payload = excluded.payload,
-                notes   = CASE WHEN excluded.notes <> '' THEN excluded.notes ELSE sources.notes END,
-                tags    = CASE WHEN excluded.tags <> '[]' THEN excluded.tags ELSE sources.tags END
+                title     = excluded.title,
+                year      = excluded.year,
+                authors   = excluded.authors,
+                journal   = excluded.journal,
+                doi       = excluded.doi,
+                url       = excluded.url,
+                payload   = excluded.payload,
+                notes     = CASE WHEN excluded.notes <> '' THEN excluded.notes ELSE sources.notes END,
+                tags      = CASE WHEN excluded.tags <> '[]' THEN excluded.tags ELSE sources.tags END,
+                full_text = CASE WHEN excluded.full_text <> '' THEN excluded.full_text ELSE sources.full_text END
             """,
             {
                 "id": library_id,
@@ -118,6 +142,7 @@ def save_source(path: Path, source: dict[str, Any], notes: str = "", tags: list[
                 "notes": notes or "",
                 "tags": json.dumps(tags),
                 "saved_at": _now(),
+                "full_text": full_text or "",
             },
         )
     item = next((entry for entry in list_sources(path) if entry["library_id"] == library_id), None)
@@ -155,6 +180,75 @@ def delete_source(path: Path, library_id: str) -> bool:
     with _connect(path) as connection:
         cursor = connection.execute("DELETE FROM sources WHERE id = ?", (library_id,))
     return cursor.rowcount > 0
+
+
+# ------------------------------------------------------- full-text groundwork
+# Module 6 (chat over your library) will need the actual source text. We keep
+# it private: LibraryItem responses never include it, only these helpers read it.
+
+
+def get_source_text(path: Path, library_id: str) -> str:
+    with _connect(path) as connection:
+        row = connection.execute(
+            "SELECT full_text FROM sources WHERE id = ?", (library_id,)
+        ).fetchone()
+    return (row["full_text"] if row else "") or ""
+
+
+def set_source_text(path: Path, library_id: str, text: str) -> bool:
+    if not text:
+        return False
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            "UPDATE sources SET full_text = ? WHERE id = ?", (text, library_id)
+        )
+    return cursor.rowcount > 0
+
+
+def stash_source_text(path: Path, text: str) -> str:
+    """
+    Hold a freshly summarized source's text for a few days.
+
+    The summarize response only carries a short token back to the browser, so
+    the full text never bloats the JSON. Saving the summary consumes the token.
+    """
+    if not text:
+        return ""
+    token = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=STASH_RETENTION_DAYS)).isoformat(timespec="seconds")
+    with _connect(path) as connection:
+        connection.execute(
+            "INSERT INTO summary_texts (id, text, created_at) VALUES (?, ?, ?)",
+            (token, text, now.isoformat(timespec="seconds")),
+        )
+        connection.execute("DELETE FROM summary_texts WHERE created_at < ?", (cutoff,))
+        # Keep the stash small even on a busy shared instance (~12 MB at 120k
+        # characters per entry). Saving consumes the token immediately.
+        connection.execute(
+            """
+            DELETE FROM summary_texts
+            WHERE id NOT IN (
+                SELECT id FROM summary_texts ORDER BY created_at DESC LIMIT 100
+            )
+            """
+        )
+    return token
+
+
+def take_source_text(path: Path, token: str) -> str:
+    """Return and delete a stashed text. Unknown or expired tokens return ''."""
+    token = (token or "").strip()
+    if not token:
+        return ""
+    with _connect(path) as connection:
+        row = connection.execute(
+            "SELECT text FROM summary_texts WHERE id = ?", (token,)
+        ).fetchone()
+        if row is None:
+            return ""
+        connection.execute("DELETE FROM summary_texts WHERE id = ?", (token,))
+    return row["text"] or ""
 
 
 # --------------------------------------------------------------------- exports

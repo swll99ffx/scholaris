@@ -48,12 +48,60 @@ _LIMITATION_CUES = re.compile(
 _CITATION_YEAR_RE = re.compile(r"\s*\((?:[A-Z][^()]{0,80}?,\s*)?(?:19|20)\d{2}[a-z]?\)")
 _INLINE_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
-_SYSTEM_PROMPT = (
-    "You are a careful academic study assistant. Summarize the source for a student "
-    "using ONLY the numbered sentences supplied. Never add facts, numbers or claims "
-    "that are not in the text. Write plain English. Return one JSON object and nothing "
-    "else."
-)
+_SYSTEM_PROMPTS = {
+    "academic": (
+        "You are a careful academic study assistant. Summarize the source for a student "
+        "using ONLY the numbered sentences supplied. Never add facts, numbers or claims "
+        "that are not in the text. Write plain English. Return one JSON object and nothing "
+        "else."
+    ),
+    "plain": (
+        "You are a patient tutor explaining a research paper to a curious secondary-school "
+        "student. Use plain, everyday English and short sentences. When a technical term is "
+        "unavoidable, explain it briefly in parentheses. Summarize using ONLY the numbered "
+        "sentences supplied. Never add facts, numbers or claims that are not in the text. "
+        "Return one JSON object and nothing else."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailProfile:
+    """How much the AI (and the offline fallback) should write."""
+
+    max_tokens: int
+    tldr_words: int
+    key_min: int
+    key_max: int
+    methods_max: int
+    findings_max: int
+    limitations_max: int
+
+
+_DETAIL_PROFILES = {
+    "quick": _DetailProfile(550, 35, 2, 3, 2, 2, 2),
+    "standard": _DetailProfile(900, 45, 3, 5, 3, 3, 3),
+    "deep": _DetailProfile(1500, 70, 4, 6, 4, 4, 4),
+}
+
+# Offline limits: (key points, methods, findings, limitations). "standard"
+# matches the original v1.0 output exactly.
+_HEURISTIC_LIMITS = {
+    "quick": (3, 2, 2, 2),
+    "standard": (4, 3, 3, 2),
+    "deep": (5, 3, 4, 3),
+}
+
+# The offline TL;DR keeps the v1.0 allowance for "standard".
+_HEURISTIC_TLDR_WORDS = {"quick": 35, "standard": 55, "deep": 70}
+
+
+def _profile(detail: str) -> _DetailProfile:
+    return _DETAIL_PROFILES.get(detail, _DETAIL_PROFILES["standard"])
+
+
+def _heuristic_limits(detail: str) -> tuple[int, int, int, int]:
+    return _HEURISTIC_LIMITS.get(detail, _HEURISTIC_LIMITS["standard"])
 
 
 @dataclass(slots=True)
@@ -151,10 +199,12 @@ def _pick(
     return sorted(chosen, key=lambda sentence: sentence.index)
 
 
-def heuristic_draft(document: Document, quote_count: int = 3) -> Draft:
+def heuristic_draft(document: Document, quote_count: int = 3, detail: str = "standard") -> Draft:
     sentences = document.sentences
     if not sentences:
         raise ValueError("There are no sentences to summarize.")
+
+    key_limit, method_limit, finding_limit, limitation_limit = _heuristic_limits(detail)
 
     method_candidates: list[tuple[float, Sentence]] = []
     finding_candidates: list[tuple[float, Sentence]] = []
@@ -181,16 +231,16 @@ def heuristic_draft(document: Document, quote_count: int = 3) -> Draft:
             other_candidates.append((_score(sentence, None, position), sentence))
 
     used: set[int] = set()
-    methods = _pick(method_candidates, used, 3)
-    limitations = _pick(limitation_candidates, used, 2)
-    findings = _pick(finding_candidates, used, 3)
+    methods = _pick(method_candidates, used, method_limit)
+    limitations = _pick(limitation_candidates, used, limitation_limit)
+    findings = _pick(finding_candidates, used, finding_limit)
 
     # Key points: context/aim sentences first. If the abstract is very short,
     # fall back to the strongest findings so the section is never empty.
     key_pool = other_candidates or finding_candidates or [
         (_score(sentence, None, position), sentence) for position, sentence in enumerate(sentences)
     ]
-    key_points = _pick(key_pool, used, 4)
+    key_points = _pick(key_pool, used, key_limit)
 
     if not findings:
         # No explicit results cue: use the best remaining informative sentences.
@@ -199,7 +249,7 @@ def heuristic_draft(document: Document, quote_count: int = 3) -> Draft:
             for position, sentence in enumerate(sentences)
             if sentence.index not in used
         ]
-        findings = _pick(fallback, used, 2)
+        findings = _pick(fallback, used, min(2, finding_limit))
 
     if not key_points:
         key_points = _pick(
@@ -212,7 +262,10 @@ def heuristic_draft(document: Document, quote_count: int = 3) -> Draft:
         )
 
     tldr_source = (findings or key_points or sentences)[:2]
-    tldr = _tldr(" ".join(sentence.text for sentence in tldr_source))
+    tldr = _tldr(
+        " ".join(sentence.text for sentence in tldr_source),
+        _HEURISTIC_TLDR_WORDS.get(detail, 55),
+    )
 
     quote_pool = [
         (_quote_score(sentence, position), sentence)
@@ -283,7 +336,12 @@ def _string_list(value: Any, limit: int, max_chars: int = 320) -> list[str]:
     return items
 
 
-def _draft_from_llm(answer: str, document: Document, quote_count: int) -> Draft | None:
+def _draft_from_llm(
+    answer: str,
+    document: Document,
+    quote_count: int,
+    detail: str = "standard",
+) -> Draft | None:
     data = _extract_json(answer)
     if data is None:
         return None
@@ -295,10 +353,11 @@ def _draft_from_llm(answer: str, document: Document, quote_count: int) -> Draft 
     if len(tldr) > 600:
         tldr = tldr[:600].rstrip() + " …"
 
-    key_points = _string_list(data.get("key_points"), 5)
-    methods = _string_list(data.get("methods"), 3)
-    findings = _string_list(data.get("findings"), 3)
-    limitations = _string_list(data.get("limitations"), 3)
+    profile = _profile(detail)
+    key_points = _string_list(data.get("key_points"), profile.key_max)
+    methods = _string_list(data.get("methods"), profile.methods_max)
+    findings = _string_list(data.get("findings"), profile.findings_max)
+    limitations = _string_list(data.get("limitations"), profile.limitations_max)
     if not any((key_points, methods, findings, limitations)):
         return None
 
@@ -349,53 +408,101 @@ def _prompt(document: Document, settings: Settings) -> tuple[str, int]:
     return "\n".join(lines), sent
 
 
-async def _llm_draft(
-    document: Document,
-    source_title: str,
-    settings: Settings,
-    quote_count: int,
-) -> Draft | None:
-    client = LLMClient(settings)
-    if not client.available:
-        return None
-
-    numbered, sent = _prompt(document, settings)
-    if sent == 0:
-        return None
-
+def _json_spec(detail: str, quote_count: int) -> str:
+    profile = _profile(detail)
     quote_spec = (
         f'"quotes": [sentence numbers, 2-{quote_count} of them]'
         if quote_count
         else '"quotes": []'
     )
-    user = (
-        f"Paper title: {source_title or 'unknown'}\n\n"
-        f"Numbered sentences from the source:\n{numbered}\n\n"
+    return (
         "Return JSON with exactly these keys:\n"
-        '{"tldr": "one plain-English sentence, max 45 words", '
-        '"key_points": ["3-5 short main ideas"], '
-        '"methods": ["how the study was done, 0-3 items"], '
-        '"findings": ["what it found, 0-3 items"], '
-        '"limitations": ["only limitations actually stated, 0-3 items"], '
+        f'{{"tldr": "one plain-English summary, max {profile.tldr_words} words", '
+        f'"key_points": ["{profile.key_min}-{profile.key_max} short main ideas"], '
+        f'"methods": ["how the study was done, 0-{profile.methods_max} items"], '
+        f'"findings": ["what it found, 0-{profile.findings_max} items"], '
+        f'"limitations": ["only limitations actually stated, 0-{profile.limitations_max} items"], '
         f"{quote_spec}}}\n\n"
         "Rules: use only the sentences above; do not invent numbers or claims; "
         "write short phrases, not paragraphs; quote numbers must be the [number] labels. "
         "If a section is not stated in the text, use an empty list."
     )
+
+
+async def _llm_draft(
+    document: Document,
+    source_title: str,
+    settings: Settings,
+    quote_count: int,
+    detail: str = "standard",
+    mode: str = "academic",
+) -> tuple[Draft | None, str]:
+    """
+    Ask the AI for a draft.
+
+    Returns ``(draft, failure)`` where failure is ``""`` on success,
+    ``"unavailable"`` when no provider answered, and ``"malformed"`` when the
+    provider answered but neither attempt was valid JSON.
+    """
+    client = LLMClient(settings)
+    if not client.available:
+        return None, "unavailable"
+
+    numbered, sent = _prompt(document, settings)
+    if sent == 0:
+        return None, "unavailable"
+
+    profile = _profile(detail)
+    system = _SYSTEM_PROMPTS.get(mode, _SYSTEM_PROMPTS["academic"])
+    user = (
+        f"Paper title: {source_title or 'unknown'}\n\n"
+        f"Numbered sentences from the source:\n{numbered}\n\n"
+        f"{_json_spec(detail, quote_count)}"
+    )
     try:
         answer = await asyncio.wait_for(
             client.complete(
-                system=_SYSTEM_PROMPT,
+                system=system,
                 user=user,
-                max_tokens=900,
+                max_tokens=profile.max_tokens,
                 temperature=0.1,
             ),
             timeout=settings.summarize_llm_timeout_seconds,
         )
     except Exception:  # noqa: BLE001 - AI is a bonus; offline summary still works
-        return None
+        return None, "unavailable"
 
-    return _draft_from_llm(answer, document, quote_count)
+    draft = _draft_from_llm(answer, document, quote_count, detail)
+    if draft is not None:
+        return draft, ""
+
+    # One repair attempt: free providers sometimes wrap JSON in prose or cut it
+    # off. Re-ask with a low temperature and an explicit reminder.
+    repair_user = (
+        f"{user}\n\n"
+        "Your previous answer was not valid JSON. Return ONLY the JSON object now — "
+        "no code fences, no explanation, no trailing text."
+    )
+    try:
+        answer = await asyncio.wait_for(
+            client.complete(
+                system=system,
+                user=repair_user,
+                max_tokens=profile.max_tokens,
+                temperature=0.0,
+            ),
+            timeout=settings.summarize_llm_timeout_seconds,
+        )
+    except Exception:  # noqa: BLE001 - fall back to the offline summary
+        return None, "malformed"
+
+    draft = _draft_from_llm(answer, document, quote_count, detail)
+    if draft is not None:
+        draft.warnings.append(
+            "The AI's first reply was not valid JSON, so it was asked once more."
+        )
+        return draft, ""
+    return None, "malformed"
 
 
 async def summarize_document(
@@ -404,15 +511,28 @@ async def summarize_document(
     source_title: str,
     settings: Settings,
     quote_count: int = 3,
+    detail: str = "standard",
+    mode: str = "academic",
 ) -> tuple[Draft, str]:
     """Return the best available draft and whether AI was used."""
-    heuristic = heuristic_draft(document, quote_count=quote_count)
+    heuristic = heuristic_draft(document, quote_count=quote_count, detail=detail)
     if not settings.summarize_with_llm:
         return heuristic, "heuristic"
 
-    draft = await _llm_draft(document, source_title, settings, quote_count)
+    draft, failure = await _llm_draft(
+        document,
+        source_title,
+        settings,
+        quote_count,
+        detail=detail,
+        mode=mode,
+    )
     if draft is None:
-        if settings.llm_available:
+        if failure == "malformed":
+            heuristic.warnings.append(
+                "The AI's reply could not be read, so this summary was built offline from your text."
+            )
+        elif settings.llm_available:
             heuristic.warnings.append(
                 "The AI was unavailable, so this summary was built offline from your text."
             )

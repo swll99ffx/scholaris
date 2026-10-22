@@ -162,6 +162,8 @@ export interface NotesResponse {
 // ---------------------------------------------------------------- Module 2
 
 export type SummaryAiSource = "llm" | "heuristic";
+export type SummaryDetail = "quick" | "standard" | "deep";
+export type SummaryMode = "academic" | "plain";
 
 export interface SummarySourceMeta {
   title: string;
@@ -175,6 +177,15 @@ export interface SummarySourceMeta {
 export interface SummaryQuote {
   text: string;
   page: number | null;
+  note: string;
+}
+
+export interface SummaryCitations {
+  author_label: string;
+  year_label: string;
+  in_text: string;
+  narrative: string;
+  reference: string;
   note: string;
 }
 
@@ -193,12 +204,27 @@ export interface Summary {
   truncated: boolean;
   warnings: string[];
   took_ms: number;
+  detail: SummaryDetail;
+  mode: SummaryMode;
+  citations: SummaryCitations;
+  summary_id: string;
 }
 
 export interface SummarizeTextRequest {
   text: string;
   source: SummarySourceMeta;
   quote_count: number;
+  detail: SummaryDetail;
+  mode: SummaryMode;
+}
+
+export interface DoiLookup {
+  title: string;
+  authors: string[];
+  year: number | null;
+  journal: string | null;
+  doi: string | null;
+  url: string | null;
 }
 
 export interface SaveSummaryResponse {

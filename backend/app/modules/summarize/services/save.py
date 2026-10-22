@@ -39,14 +39,20 @@ def save_summary(
     """Create or update a library entry whose notes hold the summary."""
     block = format_notes(summary)
     source = summary.get("source") or {}
+    # The summarize response stashes the full source text under a short token;
+    # consume it so the library can keep the original text for future chat.
+    token = str(summary.get("summary_id") or "")
 
     if library_id:
         current = library.get_source(path, library_id)
         if current is None:
             raise KeyError(library_id)
+        full_text = library.take_source_text(path, token)
         notes = _append_notes(current.get("notes", ""), block)
         tags = list(dict.fromkeys([*(current.get("tags") or []), "summary"]))
         updated = library.update_source(path, library_id, notes=notes, tags=tags)
+        if full_text:
+            library.set_source_text(path, library_id, full_text)
         return {
             "library_id": library_id,
             "title": current.get("title") or _fallback_title(summary),
@@ -65,11 +71,14 @@ def save_summary(
     )
     stable_id = source_id(record)
     current = library.get_source(path, stable_id)
+    full_text = library.take_source_text(path, token)
 
     if current is not None:
         notes = _append_notes(current.get("notes", ""), block)
         tags = list(dict.fromkeys([*(current.get("tags") or []), "summary"]))
         library.update_source(path, stable_id, notes=notes, tags=tags)
+        if full_text:
+            library.set_source_text(path, stable_id, full_text)
         return {
             "library_id": stable_id,
             "title": current.get("title") or record.title,
@@ -78,7 +87,9 @@ def save_summary(
         }
 
     payload = to_out(record)
-    item = library.save_source(path, payload, notes=block, tags=["summary"])
+    item = library.save_source(
+        path, payload, notes=block, tags=["summary"], full_text=full_text
+    )
     if not item:
         raise RuntimeError("The summary could not be saved.")
     return {

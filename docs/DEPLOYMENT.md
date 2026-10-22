@@ -114,7 +114,7 @@ sudo journalctl -u scholaris -f
 Expected health response:
 
 ```json
-{"status": "ok", "app": "Scholaris", "version": "1.0.0", "ai": "free"}
+{"status": "ok", "app": "Scholaris", "version": "1.1.0", "ai": "free"}
 ```
 
 The access code is required for every API route except `/api/health` and the

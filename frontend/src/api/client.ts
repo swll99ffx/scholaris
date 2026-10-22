@@ -1,5 +1,6 @@
 import type {
   AccessStatus,
+  DoiLookup,
   ExportFormat,
   Health,
   LibraryItem,
@@ -13,6 +14,8 @@ import type {
   SearchResponse,
   SummarizeTextRequest,
   Summary,
+  SummaryDetail,
+  SummaryMode,
   SummarySourceMeta,
 } from "./types";
 
@@ -217,6 +220,29 @@ export async function summarizePdf(
   file: File,
   source: SummarySourceMeta,
   quoteCount: number,
+  detail: SummaryDetail,
+  mode: SummaryMode,
+): Promise<Summary> {
+  return summarizeFile("pdf", file, source, quoteCount, detail, mode);
+}
+
+export async function summarizeDocx(
+  file: File,
+  source: SummarySourceMeta,
+  quoteCount: number,
+  detail: SummaryDetail,
+  mode: SummaryMode,
+): Promise<Summary> {
+  return summarizeFile("docx", file, source, quoteCount, detail, mode);
+}
+
+async function summarizeFile(
+  kind: "pdf" | "docx",
+  file: File,
+  source: SummarySourceMeta,
+  quoteCount: number,
+  detail: SummaryDetail,
+  mode: SummaryMode,
 ): Promise<Summary> {
   const form = new FormData();
   form.append("file", file);
@@ -227,12 +253,43 @@ export async function summarizePdf(
   form.append("doi", source.doi ?? "");
   form.append("url", source.url ?? "");
   form.append("quote_count", String(quoteCount));
+  form.append("detail", detail);
+  form.append("mode", mode);
 
-  const response = await fetch(`${apiBase()}/api/summarize/pdf`, {
+  const response = await fetch(`${apiBase()}/api/summarize/${kind}`, {
     method: "POST",
     body: form,
   });
   return parseResponse<Summary>(response);
+}
+
+export async function lookupDoi(doi: string): Promise<DoiLookup> {
+  const response = await fetch(
+    `${apiBase()}/api/summarize/doi?doi=${encodeURIComponent(doi.trim())}`,
+  );
+  return parseResponse<DoiLookup>(response);
+}
+
+export async function downloadSummaryDocx(summary: Summary): Promise<void> {
+  const response = await fetch(`${apiBase()}/api/summarize/export/docx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(summary),
+  });
+  if (!response.ok) {
+    await parseResponse(response); // throws with a friendly message
+  }
+  const blob = await response.blob();
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = `scholaris-summary-${today}.docx`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function saveSummary(

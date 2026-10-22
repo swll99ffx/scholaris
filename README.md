@@ -115,28 +115,43 @@ instructions below, or follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to put it
 
 ## What Module 2 does
 
-- **Paste anything, or upload a PDF.** An abstract, one section, or the full article works.
-  PDFs are read page by page (up to 15 MB and 60 pages), and scanned image-only PDFs get a
-  clear message instead of a fake summary.
+- **Paste text, or upload a PDF or Word document.** An abstract, one section, or the full
+  article works. PDFs are read page by page (up to 15 MB and 60 pages). `.docx` files are read
+  paragraph by paragraph, including tables; page numbers come from the file's page breaks when
+  it has them. Scanned image-only PDFs and image-only Word files get a clear message instead of
+  a fake summary.
+- **Choose how deep to go.** **Quick** gives a fast skim, **Standard** is the normal study
+  summary, and **Deep** asks for a fuller synthesis with more key points and findings.
 - **Structured summary.** Every summary has a one-sentence **TL;DR**, then **key points,
   methods, findings and limitations** as short bullets you can actually study from.
 - **Plain-English writing.** With AI available, the summary is rewritten in simple language
-  instead of copied jargon. Without AI, a deterministic extractive summary is built offline.
+  instead of copied jargon. Turn on **Plain English** style for a patient, tutor-style
+  explanation, or keep **Academic** for normal study language. Without AI, a deterministic
+  extractive summary is built offline.
 - **Verbatim quote finder.** Quotes are chosen from the real sentences in your source. For
   PDFs each quote keeps its **page number**, ready to drop into an RRL. The AI can only pick
-  **sentence numbers**, so it cannot invent a quote that is not in the paper.
-- **Never depends on AI.** If the online AI is busy or no key is configured, the offline
-  summarizer still returns methods, findings, limitations and quotes. The badge tells you
-  whether you are looking at an **AI summary** or an **Offline summary**.
+  **sentence numbers**, so it cannot invent a quote that is not in the paper, and if its reply
+  is not valid JSON Scholaris re-asks once before falling back offline (with a visible note).
+- **One-click APA 7.** Each quote has an **APA** button that copies the in-text citation with
+  the right page number (for example, `(Lovelace & Hopper, 2025, p. 4)`). The citation panel
+  below the summary shows the parenthetical form, the narrative form and a draft reference,
+  each with its own copy button. References are built only from the details you entered —
+  nothing is invented — and the DOI is normalised into a full `https://doi.org/...` link.
+- **Fill details by DOI.** Paste a DOI and click **Fetch by DOI** to fill the title, authors,
+  year, journal and URL from the free OpenAlex record. Check the details before citing.
+- **Never depends on AI.** If the online AI is busy, rate-limited or no key is configured, the
+  offline summarizer still returns methods, findings, limitations and quotes. The badge tells
+  you whether you are looking at an **AI summary** or an **Offline summary**.
 - **Save straight into My Library.** Add optional title/authors/year/journal/DOI details and
   the summary becomes a citable library entry, with the summary stored in its notes. If the
   paper is already in your library, the summary is appended to that saved source instead of
-  creating a duplicate.
+  creating a duplicate. The original source text is stored privately with the library entry
+  (it is never returned in library responses) as groundwork for Module 6.
 - **From search results to summary in one click.** Every Module 1 result with an abstract has a
   **Summarize** button that carries its abstract and citation details across, and links back to
   the saved source when there is one.
-- **Copy or download.** Copy the whole summary, copy an individual quote, or download a plain
-  `.txt` copy.
+- **Copy or download.** Copy the whole summary, copy an individual quote or APA citation, or
+  download a plain `.txt` or a formatted **`.docx`** copy.
 
 > **PDF tip:** if the PDF is a scan or a photo export, the words are images rather than text.
 > Run OCR first (or paste the text) — the summarizer only quotes text it can actually read.

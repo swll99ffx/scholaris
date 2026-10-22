@@ -1636,6 +1636,77 @@ p {
   height: 32px;
 }
 
+.quote-cite {
+  width: auto;
+  height: 32px;
+  padding: 0 0.5rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.doi-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.doi-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-citation {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 0.95rem;
+}
+
+.summary-citation h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.citation-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.citation-line code {
+  padding: 0.1rem 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.citation-label {
+  min-width: 5.4rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.citation-reference {
+  margin-top: 0.65rem;
+}
+
+.citation-reference p {
+  margin: 0.3rem 0 0.45rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
 .summary-actions-row {
   border-top: 1px solid var(--border);
   padding-top: 0.8rem;
@@ -1661,6 +1732,14 @@ p {
 
   .summarize-actions .btn-large {
     width: 100%;
+  }
+
+  .doi-row {
+    flex-direction: column;
+  }
+
+  .citation-label {
+    min-width: 0;
   }
 }
 

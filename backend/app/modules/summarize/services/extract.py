@@ -11,13 +11,18 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+import zipfile
 from dataclasses import dataclass, field
 
-# Guard rails so a huge PDF cannot make a request slow or fill the RAM.
+# Guard rails so a huge file cannot make a request slow or fill the RAM.
 MAX_PDF_PAGES = 60
 MAX_PDF_BYTES = 15 * 1024 * 1024
+MAX_DOCX_BYTES = 15 * 1024 * 1024
+MAX_DOCX_XML_BYTES = 40 * 1024 * 1024
+MAX_DOCX_TOTAL_BYTES = 120 * 1024 * 1024
 MAX_TEXT_CHARS = 120_000
 MIN_PDF_TEXT_CHARS = 40
+MIN_DOCX_TEXT_CHARS = 40
 
 _WHITESPACE_RE = re.compile(r"[ \t\f\v\u00a0]+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'“”‘’(])")
@@ -78,6 +83,10 @@ class Document:
 
 class PdfError(ValueError):
     """A PDF could not be read (encrypted, scanned, not a PDF, ...)."""
+
+
+class DocxError(ValueError):
+    """A .docx could not be read (old .doc format, damaged, images only, ...)."""
 
 
 def _normalize(text: str) -> str:
@@ -243,6 +252,169 @@ def read_pdf(data: bytes) -> Document:
             "or run OCR on the file first."
         )
     return document_from_pages(pages)
+
+
+def _paragraph_has_page_break(paragraph: object) -> bool:
+    """True when a Word paragraph contains an explicit or rendered page break."""
+    from docx.oxml.ns import qn
+
+    element = paragraph._p  # type: ignore[attr-defined]
+    for br in element.iter(qn("w:br")):
+        if br.get(qn("w:type")) == "page":
+            return True
+    # Word records where it last paginated the document. Those markers are a
+    # good page map when the author did not insert manual breaks.
+    return any(True for _ in element.iter(qn("w:lastRenderedPageBreak")))
+
+
+def _docx_blocks(document: object) -> list[tuple[str, bool]]:
+    """Read paragraphs and tables in document order, with page-break flags."""
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    blocks: list[tuple[str, bool]] = []
+    for child in document.element.body.iterchildren():  # type: ignore[attr-defined]
+        if isinstance(child, CT_P):
+            paragraph = Paragraph(child, document)  # type: ignore[arg-type]
+            text = paragraph.text.strip()
+            if text:
+                blocks.append((text, _paragraph_has_page_break(paragraph)))
+        elif isinstance(child, CT_Tbl):
+            table = Table(child, document)  # type: ignore[arg-type]
+            for row in table.rows:
+                cells: list[str] = []
+                for cell in row.cells:
+                    value = cell.text.strip()
+                    if value and value not in cells:
+                        cells.append(value)
+                if cells:
+                    blocks.append((" | ".join(cells), False))
+    return blocks
+
+
+def read_docx(data: bytes) -> Document:
+    """
+    Extract text from a .docx file.
+
+    Word does not store fixed page numbers, so pages come from explicit page
+    breaks (or Word's last-rendered pagination markers) when present. Without
+    them every sentence has ``page=None`` and the UI says so.
+    """
+    if not data:
+        raise DocxError("The uploaded file was empty.")
+    if len(data) > MAX_DOCX_BYTES:
+        raise DocxError("That .docx is larger than 15 MB. Try a smaller file or paste the text.")
+    if data.startswith(b"\xd0\xcf\x11\xe0"):
+        raise DocxError("That is an old .doc file. Open it in Word and save it as .docx first.")
+    if not data.startswith(b"PK\x03\x04"):
+        raise DocxError("That file is not a .docx document. Upload a .docx file or paste the text instead.")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            info = archive.getinfo("word/document.xml")
+            if info.file_size > MAX_DOCX_XML_BYTES:
+                raise DocxError(
+                    "That .docx is too large to read safely. Try exporting a smaller file."
+                )
+            total = sum(entry.file_size for entry in archive.infolist())
+            if total > MAX_DOCX_TOTAL_BYTES:
+                raise DocxError(
+                    "That .docx expands to too much data to read safely. Try a smaller file."
+                )
+    except DocxError:
+        raise
+    except KeyError as exc:
+        raise DocxError(
+            "That file is not a valid .docx document. Re-export it from Word or Google Docs."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - zipfile raises several error types
+        raise DocxError(
+            "That file is not a valid .docx document. Re-export it from Word or Google Docs."
+        ) from exc
+
+    try:
+        from docx import Document as DocxDocument
+    except ImportError as exc:  # pragma: no cover - dependency is in requirements.txt
+        raise DocxError("DOCX support is not installed on the server (missing python-docx).") from exc
+
+    try:
+        document = DocxDocument(io.BytesIO(data))
+        blocks = _docx_blocks(document)
+    except Exception as exc:  # noqa: BLE001 - python-docx raises several different errors
+        raise DocxError(
+            "That .docx could not be read. It may be damaged or use an unsupported format."
+        ) from exc
+
+    if not blocks:
+        raise DocxError(
+            "This .docx has no selectable text. It may contain only images — paste the text instead."
+        )
+
+    page_blocks: list[tuple[int | None, str]] = []
+    current: list[str] = []
+    page_number = 1
+    used_page_breaks = False
+    for block_text, break_after in blocks:
+        current.append(block_text)
+        if break_after:
+            used_page_breaks = True
+            page_blocks.append((page_number, " ".join(current)))
+            current = []
+            page_number += 1
+    if current:
+        page_blocks.append((page_number if used_page_breaks else None, " ".join(current)))
+
+    sentences: list[Sentence] = []
+    kept_pages: list[str] = []
+    total_chars = 0
+    truncated = False
+    for page, raw_page in page_blocks:
+        cleaned = clean_text(raw_page)
+        if not cleaned:
+            continue
+        remaining = MAX_TEXT_CHARS - total_chars
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(cleaned) > remaining:
+            cleaned = cleaned[:remaining]
+            truncated = True
+        kept_pages.append(cleaned)
+        total_chars += len(cleaned)
+        offset = len(sentences)
+        sentences.extend(
+            Sentence(text=sentence, page=page, index=offset + position)
+            for position, sentence in enumerate(split_sentences(cleaned))
+        )
+
+    text = " ".join(kept_pages)
+    if not sentences or len(text.strip()) < MIN_DOCX_TEXT_CHARS:
+        raise DocxError(
+            "This .docx has almost no selectable text. It may contain only images — paste the text instead."
+        )
+
+    warnings: list[str] = []
+    if truncated:
+        warnings.append(
+            "Only part of the document was summarized (the limit is 120,000 characters)."
+        )
+    if not used_page_breaks:
+        warnings.append(
+            "Word documents do not store fixed page numbers, so quotes from a .docx are not tied "
+            "to a page. Page numbers appear only when the file contains page breaks."
+        )
+
+    return Document(
+        sentences=sentences,
+        text=text,
+        word_count=sum(len(sentence.text.split()) for sentence in sentences),
+        kind="docx",
+        page_count=max((page for page, _ in page_blocks if page is not None), default=None),
+        truncated=truncated,
+        warnings=warnings,
+    )
 
 
 def excerpt(text: str, limit: int = 700) -> str:
